@@ -47,6 +47,7 @@ The application provides a command-line interface with the following options:
 3. Update Task
 4. Delete Task
 5. Mark Task as Completed
-6. Exit
+6. Delete All Tasks
+7. Exit
 
 Follow the on-screen prompts to interact with the application.
