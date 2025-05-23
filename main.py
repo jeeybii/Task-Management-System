@@ -6,6 +6,7 @@ import sys
 import os
 from dotenv import load_dotenv
 from typing import Optional
+from bson import ObjectId
 
 # Load environment variables
 load_dotenv()
@@ -44,7 +45,11 @@ class TaskManagementApp:
         try:
             if search_type == "id":
                 task_id = input("Enter task ID: ").strip()
-                tasks = self.task_manager.get_tasks({"_id": task_id})
+                try:
+                    tasks = self.task_manager.get_tasks({"_id": ObjectId(task_id)})
+                except Exception as e:
+                    print("Invalid task ID format")
+                    return None
             else:  # search by title
                 title = input("Enter task title: ").strip()
                 tasks = self.task_manager.get_tasks({"title": title})
@@ -155,6 +160,8 @@ class TaskManagementApp:
                 while True:
                     priority = input("Enter priority (Low/Medium/High): ").strip()
                     try:
+                        # Convert to title case for consistent comparison
+                        priority = priority.capitalize()
                         Task._validate_priority(priority)
                         filters["priority"] = priority
                         break
