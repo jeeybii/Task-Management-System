@@ -5,6 +5,7 @@ import logging
 import os
 from dotenv import load_dotenv
 from bson import ObjectId
+from dateutil import parser
 
 # Load environment variables
 load_dotenv()
@@ -37,21 +38,40 @@ class Database:
             logging.error(f"Failed to add task: {str(e)}")
             raise
 
-    def get_tasks(self, filter_criteria: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Retrieve tasks based on filter criteria."""
+    def get_tasks(self, filters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Get tasks with optional filtering."""
         try:
-            if filter_criteria is None:
-                filter_criteria = {}
-            return list(self.tasks.find(filter_criteria))
+            if filters:
+                # Handle case-insensitive title search
+                if "title" in filters:
+                    title = filters.pop("title")
+                    filters["title"] = {"$regex": f"^{title}$", "$options": "i"}
+                
+                # Handle ObjectId conversion for _id
+                if "_id" in filters:
+                    try:
+                        filters["_id"] = ObjectId(filters["_id"])
+                    except Exception as e:
+                        raise ValueError(f"Invalid task ID format: {str(e)}")
+                
+                # Handle date range filters
+                if "due_date" in filters:
+                    date_filter = filters["due_date"]
+                    if "$gte" in date_filter and isinstance(date_filter["$gte"], str):
+                        date_filter["$gte"] = parser.parse(date_filter["$gte"])
+                    if "$lte" in date_filter and isinstance(date_filter["$lte"], str):
+                        date_filter["$lte"] = parser.parse(date_filter["$lte"])
+                    
+            return list(self.tasks.find(filters))
         except Exception as e:
-            logging.error(f"Failed to retrieve tasks: {str(e)}")
+            logging.error(f"Failed to get tasks: {str(e)}")
             raise
 
-    def update_task(self, task_id: str, update_data: Dict[str, Any]) -> bool:
+    def update_task(self, task_id: ObjectId, update_data: Dict[str, Any]) -> bool:
         """Update an existing task."""
         try:
             result = self.tasks.update_one(
-                {"_id": ObjectId(task_id)},
+                {"_id": task_id},
                 {"$set": update_data}
             )
             return result.modified_count > 0
@@ -59,20 +79,20 @@ class Database:
             logging.error(f"Failed to update task: {str(e)}")
             raise
 
-    def delete_task(self, task_id: str) -> bool:
+    def delete_task(self, task_id: ObjectId) -> bool:
         """Delete a task."""
         try:
-            result = self.tasks.delete_one({"_id": ObjectId(task_id)})
+            result = self.tasks.delete_one({"_id": task_id})
             return result.deleted_count > 0
         except Exception as e:
             logging.error(f"Failed to delete task: {str(e)}")
             raise
 
-    def mark_task_completed(self, task_id: str) -> bool:
+    def mark_task_completed(self, task_id: ObjectId) -> bool:
         """Mark a task as completed."""
         try:
             result = self.tasks.update_one(
-                {"_id": ObjectId(task_id)},
+                {"_id": task_id},
                 {"$set": {"status": "Completed"}}
             )
             return result.modified_count > 0

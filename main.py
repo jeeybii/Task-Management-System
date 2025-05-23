@@ -7,6 +7,9 @@ import os
 from dotenv import load_dotenv
 from typing import Optional
 from bson import ObjectId
+import threading
+import queue
+import time
 
 # Load environment variables
 load_dotenv()
@@ -24,9 +27,52 @@ class TaskManagementApp:
             self.app_name = os.getenv('APP_NAME', 'Task Management Application')
             self.db = Database()
             self.task_manager = TaskManager(self.db)
+            self.operation_queue = queue.Queue()
+            self.result_queue = queue.Queue()
+            self.worker_thread = threading.Thread(target=self._process_operations, daemon=True)
+            self.worker_thread.start()
         except Exception as e:
             logging.error(f"Failed to initialize application: {str(e)}")
             sys.exit(1)
+
+    def _process_operations(self):
+        """Background thread to process operations."""
+        while True:
+            try:
+                operation = self.operation_queue.get()
+                if operation is None:  # Shutdown signal
+                    break
+                
+                op_type = operation.get('type')
+                data = operation.get('data', {})
+                result = None
+                
+                try:
+                    if op_type == 'add':
+                        result = self.task_manager.create_task(data)
+                    elif op_type == 'update':
+                        result = self.task_manager.update_task(data.get('task_id'), data.get('update_data'))
+                    elif op_type == 'delete':
+                        result = self.task_manager.delete_task(data.get('task_id'))
+                    elif op_type == 'mark_completed':
+                        result = self.task_manager.mark_completed(data.get('task_id'))
+                    
+                    self.result_queue.put({
+                        'success': True,
+                        'result': result,
+                        'timestamp': datetime.now()
+                    })
+                except Exception as e:
+                    logging.error(f"Operation failed: {str(e)}")
+                    self.result_queue.put({
+                        'success': False,
+                        'error': str(e),
+                        'timestamp': datetime.now()
+                    })
+                
+                self.operation_queue.task_done()
+            except Exception as e:
+                logging.error(f"Error in worker thread: {str(e)}")
 
     def display_menu(self):
         """Display the main menu."""
@@ -110,7 +156,7 @@ class TaskManagementApp:
             # Get and validate due date
             while True:
                 try:
-                    due_date = input("Due Date (YYYY-MM-DD): ").strip()
+                    due_date = input("Due Date (YYYY-MM-DD or YYYY-MM-DD HH:MM): ").strip()
                     Task._parse_date(due_date)
                     break
                 except ValueError as e:
@@ -132,13 +178,27 @@ class TaskManagementApp:
                 "priority": priority
             }
             
-            task_id = self.task_manager.create_task(task_data)
-            print(f"\nTask created successfully!")
-            print(f"Task ID: {task_id}")
-            print(f"Title: {title}")
-            print(f"Description: {description}")
-            print(f"Due Date: {due_date}")
-            print(f"Priority: {priority}")
+            # Add task to operation queue
+            self.operation_queue.put({
+                'type': 'add',
+                'data': task_data
+            })
+            
+            # Wait for result
+            while True:
+                result = self.result_queue.get()
+                if result['success']:
+                    task_id = result['result']
+                    print(f"\nTask created successfully!")
+                    print(f"Task ID: {task_id}")
+                    print(f"Title: {title}")
+                    print(f"Description: {description}")
+                    print(f"Due Date: {due_date}")
+                    print(f"Priority: {priority}")
+                else:
+                    print(f"Error: {result.get('error', 'Failed to create task')}")
+                break
+                
         except Exception as e:
             logging.error(f"Failed to add task: {str(e)}")
             print(f"Error: {str(e)}")
@@ -244,10 +304,13 @@ class TaskManagementApp:
                 print(f"\nID: {task.id}")
                 print(f"Title: {task.title}")
                 print(f"Description: {task.description}")
-                print(f"Due Date: {task.due_date.strftime('%Y-%m-%d')}")
+                print(f"Due Date: {task.due_date.strftime('%Y-%m-%d %H:%M') if task.due_date.hour != 23 else task.due_date.strftime('%Y-%m-%d')}")
                 print(f"Priority: {task.priority}")
                 print(f"Status: {task.status}")
                 print(f"Created: {task.creation_timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Add count at the end
+            print(f"\nTotal tasks found: {len(tasks)}")
         except Exception as e:
             logging.error(f"Failed to list tasks: {str(e)}")
             print(f"Error: {str(e)}")
@@ -292,7 +355,7 @@ class TaskManagementApp:
             elif choice == "3":
                 while True:
                     try:
-                        due_date = input("New due date (YYYY-MM-DD): ").strip()
+                        due_date = input("New due date (YYYY-MM-DD or YYYY-MM-DD HH:MM): ").strip()
                         Task._parse_date(due_date)
                         update_data["due_date"] = due_date
                         break
@@ -317,10 +380,24 @@ class TaskManagementApp:
                     except ValueError as e:
                         print(f"Error: {str(e)}")
             
-            if self.task_manager.update_task(task.id, update_data):
-                print("Task updated successfully")
-            else:
-                print("Failed to update task")
+            # Add update to operation queue
+            self.operation_queue.put({
+                'type': 'update',
+                'data': {
+                    'task_id': task.id,
+                    'update_data': update_data
+                }
+            })
+            
+            # Wait for result
+            while True:
+                result = self.result_queue.get()
+                if result['success']:
+                    print("Task updated successfully")
+                else:
+                    print(f"Error: {result.get('error', 'Failed to update task')}")
+                break
+                
         except Exception as e:
             logging.error(f"Failed to update task: {str(e)}")
             print(f"Error: {str(e)}")
@@ -350,10 +427,22 @@ class TaskManagementApp:
             
             confirm = input("\nAre you sure you want to delete this task? (yes/no): ").strip().lower()
             if confirm == "yes":
-                if self.task_manager.delete_task(task.id):
-                    print("Task deleted successfully")
-                else:
-                    print("Failed to delete task")
+                # Add delete to operation queue
+                self.operation_queue.put({
+                    'type': 'delete',
+                    'data': {
+                        'task_id': task.id
+                    }
+                })
+                
+                # Wait for result
+                while True:
+                    result = self.result_queue.get()
+                    if result['success']:
+                        print("Task deleted successfully")
+                    else:
+                        print(f"Error: {result.get('error', 'Failed to delete task')}")
+                    break
             else:
                 print("Deletion cancelled")
         except Exception as e:
@@ -375,10 +464,23 @@ class TaskManagementApp:
             if not task:
                 return
             
-            if self.task_manager.mark_completed(task.id):
-                print("Task marked as completed")
-            else:
-                print("Failed to mark task as completed")
+            # Add mark completed to operation queue
+            self.operation_queue.put({
+                'type': 'mark_completed',
+                'data': {
+                    'task_id': task.id
+                }
+            })
+            
+            # Wait for result
+            while True:
+                result = self.result_queue.get()
+                if result['success']:
+                    print("Task marked as completed")
+                else:
+                    print(f"Error: {result.get('error', 'Failed to mark task as completed')}")
+                break
+                
         except Exception as e:
             logging.error(f"Failed to mark task as completed: {str(e)}")
             print(f"Error: {str(e)}")
@@ -421,10 +523,21 @@ class TaskManagementApp:
                 self.delete_all_tasks()
             elif choice == "7":
                 print("Goodbye!")
-                self.db.close()
+                self.close()
                 break
             else:
                 print("Invalid option. Please try again.")
+
+    def close(self):
+        """Close the application and cleanup resources."""
+        try:
+            # Signal worker thread to stop
+            self.operation_queue.put(None)
+            self.worker_thread.join()
+            self.db.close()
+            logging.info("Application closed successfully")
+        except Exception as e:
+            logging.error(f"Error closing application: {str(e)}")
 
 if __name__ == "__main__":
     app = TaskManagementApp()
