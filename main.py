@@ -231,6 +231,16 @@ class TaskManagementApp:
                 while True:
                     status = input("Enter status (Pending/In Progress/Completed): ").strip()
                     try:
+                        # Convert to lowercase for comparison
+                        status_lower = status.lower()
+                        
+                        # Handle "In Progress" specially
+                        if status_lower == "in progress":
+                            status = "In Progress"
+                        else:
+                            # For other statuses, convert to title case
+                            status = status.capitalize()
+                            
                         Task._validate_status(status)
                         filters["status"] = status
                         break

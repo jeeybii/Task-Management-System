@@ -26,7 +26,7 @@ class Task:
         title = title.strip()
         if not title:
             raise ValueError("Title cannot be empty")
-        if len(title) > 100:  # Reasonable length limit
+        if len(title) > 100:  
             raise ValueError("Title cannot be longer than 100 characters")
         return title
 
@@ -36,7 +36,7 @@ class Task:
         description = description.strip()
         if not description:
             raise ValueError("Description cannot be empty")
-        if len(description) > 1000:  # Reasonable length limit
+        if len(description) > 1000:  
             raise ValueError("Description cannot be longer than 1000 characters")
         return description
 
